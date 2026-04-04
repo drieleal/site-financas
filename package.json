@@ -1,0 +1,15 @@
+{
+  "name": "gestao-revendas",
+  "version": "1.0.0",
+  "description": "Sistema de gestão de revendas e estoque",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^4.22.1",
+    "pg": "^8.20.0"
+  }
+}
