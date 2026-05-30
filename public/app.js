@@ -32,635 +32,855 @@ function monthLabel(m) {
   if (!m) return '';
   const [y, mo] = m.split('-');
   const months = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-  return `${months[parseInt(mo)-1]} / ${y}`;
+  return `${months[parseInt(mo) - 1]} ${y}`;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ESTOQUE TAB
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── TOAST ───────────────────────────────────────────────────────────────────
+function Toast({ msg, type, onClose }) {
+  useEffect(() => { const t = setTimeout(onClose, 3500); return () => clearTimeout(t); }, []);
+  if (!msg) return null;
+  return React.createElement('div', { className: `toast ${type}` }, msg);
+}
+
+// ─── MODAL ───────────────────────────────────────────────────────────────────
+function Modal({ title, children, onClose, wide }) {
+  return React.createElement('div', { className: 'modal-overlay', onClick: e => e.target === e.currentTarget && onClose() },
+    React.createElement('div', { className: 'modal', style: wide ? { maxWidth: 640 } : {} },
+      React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 } },
+        React.createElement('div', { className: 'modal-title' }, title),
+        React.createElement('button', { className: 'btn btn-secondary btn-sm', onClick: onClose }, '✕')
+      ),
+      children
+    )
+  );
+}
+
+// ─── BADGES ──────────────────────────────────────────────────────────────────
+function StatusBadge({ status }) {
+  const map = { estoque: ['badge-estoque', 'Estoque'], em_transporte: ['badge-transporte', 'Em Transporte'], vendido: ['badge-vendido', 'Vendido'] };
+  const [cls, label] = map[status] || ['badge-estoque', status];
+  return React.createElement('span', { className: `badge ${cls}` }, label);
+}
+
+const ACCT_COLORS = ['badge-sofisa', 'badge-studio', 'badge-estoque', 'badge-transporte'];
+function AccountBadge({ account, accounts }) {
+  if (!account) return null;
+  const idx = accounts ? accounts.findIndex(a => a.name === account) : -1;
+  const cls = ACCT_COLORS[idx >= 0 ? idx % ACCT_COLORS.length : 0];
+  return React.createElement('span', { className: `badge ${cls}` }, account);
+}
+
+// ─── INSTALLMENT CHECKS ──────────────────────────────────────────────────────
+function InstallmentChecks({ total, num_installments, paid }) {
+  if (!num_installments || num_installments <= 0) return null;
+  const installment_amount = total / num_installments;
+  const completed = Math.min(Math.floor(paid / installment_amount), num_installments);
+  const partial = paid % installment_amount > 0.01 && completed < num_installments;
+
+  return React.createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 } },
+    Array.from({ length: num_installments }, (_, i) => {
+      const done = i < completed;
+      const isPartial = !done && i === completed && partial;
+      return React.createElement('div', {
+        key: i,
+        title: `Parcela ${i + 1}/${num_installments}`,
+        style: {
+          width: 22, height: 22, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 12, fontWeight: 700, cursor: 'default',
+          background: done ? '#1a3a25' : isPartial ? '#2e2a10' : 'var(--surface2)',
+          border: `1.5px solid ${done ? '#4ade80' : isPartial ? '#fbbf24' : 'var(--border)'}`,
+          color: done ? '#4ade80' : isPartial ? '#fbbf24' : 'var(--muted)'
+        }
+      }, done ? '✓' : isPartial ? '~' : i + 1);
+    }),
+    React.createElement('span', { style: { fontSize: 11, color: 'var(--muted)', alignSelf: 'center', marginLeft: 4 } },
+      `${completed}/${num_installments} parcelas`)
+  );
+}
+
+// ─── ESTOQUE TAB ─────────────────────────────────────────────────────────────
 function EstoqueTab({ toast, accounts }) {
   const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editItem, setEditItem] = useState(null);
-  
-  const defaultAccount = accounts[0]?.name || '';
+  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterAccount, setFilterAccount] = useState('');
+  const defaultAccount = accounts && accounts.length > 0 ? accounts[0].name : '';
   const [form, setForm] = useState({ name: '', purchase_date: today(), cost: '', account: defaultAccount, store: '', status: 'estoque', quantity: '1' });
-  const [filterStatus, setFilterStatus] = useState('todos');
-  const [searchTerm, setSearchTerm] = useState('');
 
   const load = useCallback(async () => {
-    try {
-      const data = await api('/api/items');
-      setItems(data);
-    } catch (e) { toast(e.message, 'error'); }
+    try { setItems(await api('/api/items')); } catch (e) { toast(e.message, 'error'); } finally { setLoading(false); }
   }, [toast]);
-
   useEffect(() => { load(); }, [load]);
 
-  const openNew = () => {
-    setEditItem(null);
-    setForm({ name: '', purchase_date: today(), cost: '', account: defaultAccount, store: '', status: 'estoque', quantity: '1' });
-    setShowModal(true);
-  };
-
-  const openEdit = (item) => {
-    setEditItem(item);
-    setForm({ name: item.name, purchase_date: item.purchase_date || today(), cost: item.cost, account: item.account, store: item.store || '', status: item.status, quantity: item.quantity?.toString() || '1' });
-    setShowModal(true);
-  };
+  const openNew = () => { setEditItem(null); setForm({ name: '', purchase_date: today(), cost: '', account: defaultAccount, store: '', status: 'estoque', quantity: '1' }); setShowModal(true); };
+  const openEdit = (item) => { setEditItem(item); setForm({ name: item.name, purchase_date: item.purchase_date || today(), cost: item.cost, account: item.account, store: item.store || '', status: item.status, quantity: item.quantity?.toString() || '1' }); setShowModal(true); };
 
   const save = async () => {
-    if (!form.name || !form.cost || !form.account) return toast('Preencha os campos obrigatórios', 'error');
+    if (!form.name || !form.cost || !form.purchase_date) return toast('Preencha todos os campos obrigatórios', 'error');
     try {
-      if (editItem) {
-        await api(`/api/items/${editItem.id}`, { method: 'PUT', body: form });
-        toast('Item atualizado!', 'success');
-      } else {
-        await api('/api/items', { method: 'POST', body: form });
-        toast('Item adicionado!', 'success');
-      }
+      if (editItem) await api(`/api/items/${editItem.id}`, { method: 'PUT', body: form });
+      else await api('/api/items', { method: 'POST', body: form });
+      toast(editItem ? 'Item updated!' : 'Item added!', 'success');
       setShowModal(false); load();
     } catch (e) { toast(e.message, 'error'); }
   };
 
-  const remove = async (item) => {
-    if (!confirm(`Excluir "${item.name}"?`)) return;
-    try {
-      await api(`/api/items/${item.id}`, { method: 'DELETE' });
-      toast('Item removido', 'success'); load();
-    } catch (e) { toast(e.message, 'error'); }
+  const del = async (id) => {
+    if (!confirm('Excluir este item?')) return;
+    try { await api(`/api/items/${id}`, { method: 'DELETE' }); toast('Excluído!', 'success'); load(); }
+    catch (e) { toast(e.message, 'error'); }
   };
 
-  const filtered = items.filter(i => {
-    if (filterStatus !== 'todos' && i.status !== filterStatus) return false;
-    if (searchTerm && !i.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
-    return true;
-  });
+  const filtered = items.filter(i =>
+    (!search || i.name.toLowerCase().includes(search.toLowerCase()) || (i.store || '').toLowerCase().includes(search.toLowerCase()) || (i.buyer || '').toLowerCase().includes(search.toLowerCase())) &&
+    (!filterStatus || i.status === filterStatus) &&
+    (!filterAccount || i.account === filterAccount)
+  );
+
+  const totalCost = filtered.reduce((a, i) => a + (parseFloat(i.cost || 0) * (parseInt(i.quantity) || 1)), 0);
+  const counts = { estoque: 0, em_transporte: 0, vendido: 0 };
+  filtered.forEach(i => { if (counts[i.status] !== undefined) counts[i.status] += (parseInt(i.quantity) || 1); });
 
   return React.createElement('div', null,
-    React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 15, flexWrap: 'wrap' } },
-      React.createElement('input', { type: 'text', placeholder: '🔍 Buscar item...', value: searchTerm, onChange: e => setSearchTerm(e.target.value), style: { flex: 1, minWidth: 200 } }),
-      React.createElement('select', { value: filterStatus, onChange: e => setFilterStatus(e.target.value) },
-        React.createElement('option', { value: 'todos' }, 'Todos os Status'),
-        React.createElement('option', { value: 'estoque' }, 'Em Estoque'),
-        React.createElement('option', { value: 'em_transporte' }, 'Em Transporte'),
-        React.createElement('option', { value: 'vendido' }, 'Vendido')
-      ),
-      React.createElement('button', { className: 'btn btn-primary', onClick: openNew }, '+ Novo Item')
+    React.createElement('div', { className: 'stats-row' },
+      React.createElement('div', { className: 'stat-card' }, React.createElement('div', { className: 'stat-label' }, 'Total'), React.createElement('div', { className: 'stat-value accent' }, filtered.reduce((acc, curr) => acc + (parseInt(curr.quantity) || 1), 0))),
+      React.createElement('div', { className: 'stat-card' }, React.createElement('div', { className: 'stat-label' }, 'Em Estoque'), React.createElement('div', { className: 'stat-value' }, counts.estoque)),
+      React.createElement('div', { className: 'stat-card' }, React.createElement('div', { className: 'stat-label' }, 'Em Transporte'), React.createElement('div', { className: 'stat-value yellow' }, counts.em_transporte)),
+      React.createElement('div', { className: 'stat-card' }, React.createElement('div', { className: 'stat-label' }, 'Vendidos'), React.createElement('div', { className: 'stat-value green' }, counts.vendido)),
+      React.createElement('div', { className: 'stat-card' }, React.createElement('div', { className: 'stat-label' }, 'Custo Total'), React.createElement('div', { className: 'stat-value red' }, fmt(totalCost)))
     ),
-    React.createElement('div', { className: 'card', style: { padding: 0, overflowX: 'auto' } },
-      React.createElement('table', { className: 'table' },
-        React.createElement('thead', null,
-          React.createElement('tr', null,
-            React.createElement('th', null, 'Produto'),
-            React.createElement('th', null, 'Custo Un.'),
-            React.createElement('th', null, 'Conta Origem'),
-            React.createElement('th', null, 'Status'),
-            React.createElement('th', null, 'Comprador / Lucro'),
-            React.createElement('th', { style: { textAlign: 'right' } }, 'Ações')
+    React.createElement('div', { className: 'card' },
+      React.createElement('div', { className: 'section-header' },
+        React.createElement('div', { className: 'filter-row' },
+          React.createElement('input', { className: 'search-bar', placeholder: '🔍 Buscar...', value: search, onChange: e => setSearch(e.target.value) }),
+          React.createElement('select', { className: 'search-bar', style: { width: 150 }, value: filterStatus, onChange: e => setFilterStatus(e.target.value) },
+            React.createElement('option', { value: '' }, 'Todos status'),
+            React.createElement('option', { value: 'estoque' }, 'Estoque'),
+            React.createElement('option', { value: 'em_transporte' }, 'Em Transporte'),
+            React.createElement('option', { value: 'vendido' }, 'Vendido')
+          ),
+          React.createElement('select', { className: 'search-bar', style: { width: 160 }, value: filterAccount, onChange: e => setFilterAccount(e.target.value) },
+            React.createElement('option', { value: '' }, 'Todas contas'),
+            (accounts || []).map(a => React.createElement('option', { key: a.id, value: a.name }, a.name))
           )
         ),
-        React.createElement('tbody', null,
-          filtered.length === 0 ? React.createElement('tr', null, React.createElement('td', { colSpan: 6, style: { textAlign: 'center', color: '#94a3b8' } }, 'Nenhum item encontrado.')) :
-          filtered.map(item => React.createElement('tr', { key: item.id + '-' + (item.sale_id || 'stock') },
-            React.createElement('td', null,
-              React.createElement('strong', null, item.name + (parseInt(item.quantity) > 1 && item.status !== 'vendido' ? ` (${item.quantity} un)` : '')),
-              React.createElement('div', { className: 'text-muted', style: { fontSize: 11 } }, `Comprado em ${fmtDate(item.purchase_date)}` + (item.store ? ` na ${item.store}` : ''))
-            ),
-            React.createElement('td', null, fmt(item.cost)),
-            React.createElement('td', null, React.createElement('span', { className: 'badge' }, item.account)),
-            React.createElement('td', null,
-              React.createElement('span', { className: `badge badge-${item.status === 'vendido' ? 'green' : item.status === 'em_transporte' ? 'orange' : 'primary'}` },
-                item.status === 'estoque' ? 'Em Estoque' : item.status === 'em_transporte' ? 'Em Transporte' : 'Vendido'
-              )
-            ),
-            React.createElement('td', null,
-              item.status === 'vendido' ? React.createElement('div', null,
-                React.createElement('div', null, React.createElement('strong', null, item.buyer), item.quantity_sold > 1 ? ` (${item.quantity_sold} un)` : ''),
-                React.createElement('div', { style: { color: '#10b981', fontSize: 12 } }, `Lucro: ${fmt(item.profit)}`)
-              ) : '—'
-            ),
-            React.createElement('td', { style: { textAlign: 'right' } },
-              React.createElement('div', { style: { display: 'flex', gap: 6, justifyContent: 'flex-end' } },
-                React.createElement('button', { className: 'btn btn-secondary btn-sm', onClick: () => openEdit(item) }, '✏️'),
-                React.createElement('button', { className: 'btn btn-danger btn-sm', onClick: () => remove(item) }, '🗑️')
+        React.createElement('button', { className: 'btn btn-primary', onClick: openNew }, '+ Novo Item')
+      ),
+      loading ? React.createElement('div', { className: 'empty' }, React.createElement('div', { className: 'spinner' })) :
+      filtered.length === 0 ? React.createElement('div', { className: 'empty' }, React.createElement('div', { className: 'empty-icon' }, '📦'), React.createElement('p', null, 'Nenhum item encontrado')) :
+      React.createElement('div', { className: 'table-wrap' },
+        React.createElement('table', null,
+          React.createElement('thead', null, React.createElement('tr', null,
+            ['Nome', 'Compra', 'Custo Un.', 'Conta', 'Loja', 'Status', 'Comprador', 'Venda', 'Lucro Lote', ''].map(h => React.createElement('th', { key: h }, h))
+          )),
+          React.createElement('tbody', null, filtered.map(item =>
+            React.createElement('tr', { key: item.id },
+              React.createElement('td', null, React.createElement('strong', null, item.name + (parseInt(item.quantity) > 1 && item.status !== 'vendido' ? ` (${item.quantity} un)` : ''))),
+              React.createElement('td', null, fmtDate(item.purchase_date)),
+              React.createElement('td', null, React.createElement('span', { style: { color: 'var(--red)', fontWeight: 600 } }, fmt(item.cost))),
+              React.createElement('td', null, React.createElement(AccountBadge, { account: item.account, accounts })),
+              React.createElement('td', null, item.store || React.createElement('span', { style: { color: 'var(--muted)' } }, '—')),
+              React.createElement('td', null, React.createElement(StatusBadge, { status: item.status })),
+              React.createElement('td', null, item.buyer ? React.createElement('span', { style: { fontWeight: 500 } }, item.buyer + (parseInt(item.quantity_sold) > 1 ? ` (${item.quantity_sold} un)` : '')) : React.createElement('span', { style: { color: 'var(--muted)' } }, '—')),
+              React.createElement('td', null, item.sale_price ? React.createElement('span', { style: { color: 'var(--yellow)', fontWeight: 600 } }, fmt(item.sale_price)) : React.createElement('span', { style: { color: 'var(--muted)' } }, '—')),
+              React.createElement('td', null, item.profit != null && item.status === 'vendido' ?
+                React.createElement('span', { style: { color: parseFloat(item.profit) >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 700 } }, fmt(item.profit)) :
+                React.createElement('span', { style: { color: 'var(--muted)' } }, '—')
+              ),
+              React.createElement('td', null,
+                React.createElement('div', { style: { display: 'flex', gap: 6 } },
+                  React.createElement('button', { className: 'btn btn-secondary btn-sm', onClick: () => openEdit(item) }, '✏️'),
+                  item.status !== 'vendido' && React.createElement('button', { className: 'btn btn-danger btn-sm', onClick: () => del(item.id) }, '🗑️')
+                )
               )
             )
           ))
         )
       )
     ),
-    showModal && React.createElement('div', { className: 'modal-backdrop' },
-      React.createElement('div', { className: 'modal' },
-        React.createElement('h3', null, editItem ? 'Editar Item' : 'Novo Item'),
-        React.createElement('div', { className: 'form-group' },
-          React.createElement('label', null, 'Nome do Produto *'),
-          React.createElement('input', { type: 'text', value: form.name, onChange: e => setForm({ ...form, name: e.target.value }) })
-        ),
-        React.createElement('div', { style: { display: 'flex', gap: 10 } },
-          React.createElement('div', { className: 'form-group', style: { flex: 1 } },
-            React.createElement('label', null, 'Custo Unitário (R$) *'),
-            React.createElement('input', { type: 'number', value: form.cost, onChange: e => setForm({ ...form, cost: e.target.value }) })
-          ),
-          React.createElement('div', { className: 'form-group', style: { flex: 1 } },
-            React.createElement('label', null, 'Quantidade Lote *'),
-            React.createElement('input', { type: 'number', min: '1', value: form.quantity, onChange: e => setForm({ ...form, quantity: e.target.value }) })
-          )
+    showModal && React.createElement(Modal, { title: editItem ? 'Editar Item' : 'Novo Item', onClose: () => setShowModal(false) },
+      React.createElement('div', { className: 'form-grid' },
+        React.createElement('div', { className: 'form-group', style: { gridColumn: '1/-1' } },
+          React.createElement('label', null, 'Nome *'),
+          React.createElement('input', { value: form.name, onChange: e => setForm({ ...form, name: e.target.value }), placeholder: 'Ex: Camisa do Brasil' })
         ),
         React.createElement('div', { className: 'form-group' },
-          React.createElement('label', null, 'Conta de Origem *'),
+          React.createElement('label', null, 'Data de Compra *'),
+          React.createElement('input', { type: 'date', value: form.purchase_date, onChange: e => setForm({ ...form, purchase_date: e.target.value }) })
+        ),
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', null, 'Custo Un. (R$) *'),
+          React.createElement('input', { type: 'number', step: '0.01', value: form.cost, onChange: e => setForm({ ...form, cost: e.target.value }), placeholder: '0,00' })
+        ),
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', null, 'Quantidade Lote *'),
+          React.createElement('input', { type: 'number', min: '1', value: form.quantity, onChange: e => setForm({ ...form, quantity: e.target.value }) })
+        ),
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', null, 'Conta'),
           React.createElement('select', { value: form.account, onChange: e => setForm({ ...form, account: e.target.value }) },
-            accounts.map(a => React.createElement('option', { key: a.id, value: a.name }, a.name))
+            (accounts || []).map(a => React.createElement('option', { key: a.id, value: a.name }, a.name))
           )
         ),
         React.createElement('div', { className: 'form-group' },
-          React.createElement('label', null, 'Loja / Fornecedor'),
-          React.createElement('input', { type: 'text', value: form.store, onChange: e => setForm({ ...form, store: e.target.value }) })
+          React.createElement('label', null, 'Loja'),
+          React.createElement('input', { value: form.store, onChange: e => setForm({ ...form, store: e.target.value }), placeholder: 'Shopee, ML...' })
         ),
-        React.createElement('div', { style: { display: 'flex', gap: 10 } },
-          React.createElement('div', { className: 'form-group', style: { flex: 1 } },
-            React.createElement('label', null, 'Data da Compra'),
-            React.createElement('input', { type: 'date', value: form.purchase_date, onChange: e => setForm({ ...form, purchase_date: e.target.value }) })
-          ),
-          React.createElement('div', { className: 'form-group', style: { flex: 1 } },
-            React.createElement('label', null, 'Status'),
-            React.createElement('select', { value: form.status, onChange: e => setForm({ ...form, status: e.target.value }) },
-              React.createElement('option', { value: 'estoque' }, 'Em Estoque'),
-              React.createElement('option', { value: 'em_transporte' }, 'Em Transporte'),
-              React.createElement('option', { value: 'vendido' }, 'Vendido')
-            )
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', null, 'Status'),
+          React.createElement('select', { value: form.status, onChange: e => setForm({ ...form, status: e.target.value }) },
+            React.createElement('option', { value: 'estoque' }, 'Em Estoque'),
+            React.createElement('option', { value: 'em_transporte' }, 'Em Transporte'),
+            React.createElement('option', { value: 'vendido' }, 'Vendido')
           )
-        ),
-        React.createElement('div', { className: 'modal-actions' },
-          React.createElement('button', { className: 'btn btn-secondary', onClick: () => setShowModal(false) }, 'Cancelar'),
-          React.createElement('button', { className: 'btn btn-primary', onClick: save }, 'Salvar')
         )
+      ),
+      React.createElement('div', { className: 'modal-footer' },
+        React.createElement('button', { className: 'btn btn-secondary', onClick: () => setShowModal(false) }, 'Cancelar'),
+        React.createElement('button', { className: 'btn btn-primary', onClick: save }, 'Salvar')
       )
     )
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// FINANCEIRO TAB (COM EDIÇÃO DE PARCELAS)
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── FINANCEIRO TAB ──────────────────────────────────────────────────────────
 function FinanceiroTab({ toast, accounts }) {
-  const [stockItems, setStockItems] = useState([]);
-  const [sales, setSales] = useState([]);
-  const [loans, setLoans] = useState([]);
-  
+  const [overview, setOverview] = useState({});
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [showSale, setShowSale] = useState(false);
   const [showLoan, setShowLoan] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
-
+  const [payTarget, setPayTarget] = useState(null);
+  
   const [editSaleTarget, setEditSaleTarget] = useState(null);
   const [editLoanTarget, setEditLoanTarget] = useState(null);
 
+  const defaultAccount = accounts && accounts.length > 0 ? accounts[0].name : '';
   const [saleForm, setSaleForm] = useState({ item_id: '', client_name: '', sale_price: '', num_installments: '1', sale_date: today(), quantity_sold: '1' });
-  const [loanForm, setLoanForm] = useState({ client_name: '', amount: '', repayment_amount: '', num_installments: '1', loan_date: today(), description: '', source_account: accounts[0]?.name || '' });
-  
-  const [paymentForm, setPaymentForm] = useState({ reference_type: '', reference_id: '', client_name: '', amount: '', payment_date: today(), installment_number: '1', max_installments: 1 });
+  const [loanForm, setLoanForm] = useState({ client_name: '', amount: '', repayment_amount: '', num_installments: '1', loan_date: today(), description: '', source_account: defaultAccount });
+  const [payForm, setPayForm] = useState({ amount: '', payment_date: today() });
 
   const load = useCallback(async () => {
     try {
-      const items = await api('/api/items');
-      setStockItems(items.filter(i => i.status !== 'vendido'));
-      setSales(await api('/api/items').then(res => res.filter(i => i.status === 'vendido')));
-      setLoans(await api('/api/loans'));
+      const [ov, its] = await Promise.all([api('/api/financial-overview'), api('/api/items')]);
+      setOverview(ov); setItems(its.filter(i => i.status !== 'vendido'));
     } catch (e) { toast(e.message, 'error'); }
+    finally { setLoading(false); }
   }, [toast]);
-
   useEffect(() => { load(); }, [load]);
 
   const saveSale = async () => {
-    if (!saleForm.item_id || !saleForm.client_name || !saleForm.sale_price) return toast('Campos obrigatórios faltando', 'error');
+    if (!saleForm.client_name || !saleForm.sale_price) return toast('Preencha todos os campos obrigatórios', 'error');
     try {
       if (editSaleTarget) {
         await api(`/api/sales/${editSaleTarget.id}`, { method: 'PUT', body: saleForm });
-        toast('Venda atualizada com sucesso!', 'success');
+        toast('Venda atualizada!', 'success');
       } else {
+        if (!saleForm.item_id) return toast('Selecione o item do estoque', 'error');
         await api('/api/sales', { method: 'POST', body: saleForm });
-        toast('Venda registrada com sucesso!', 'success');
+        toast('Venda registrada!', 'success');
       }
       setShowSale(false); setEditSaleTarget(null); load();
     } catch (e) { toast(e.message, 'error'); }
   };
 
   const saveLoan = async () => {
-    if (!loanForm.client_name || !loanForm.amount || !loanForm.repayment_amount) return toast('Campos obrigatórios faltando', 'error');
+    if (!loanForm.client_name || !loanForm.amount) return toast('Preencha todos os campos obrigatórios', 'error');
+    const repay = loanForm.repayment_amount || loanForm.amount;
     try {
       if (editLoanTarget) {
-        await api(`/api/loans/${editLoanTarget.id}`, { method: 'PUT', body: loanForm });
+        await api(`/api/loans/${editLoanTarget.id}`, { method: 'PUT', body: { ...loanForm, repayment_amount: repay } });
         toast('Empréstimo atualizado!', 'success');
       } else {
-        await api('/api/loans', { method: 'POST', body: loanForm });
+        await api('/api/loans', { method: 'POST', body: { ...loanForm, repayment_amount: repay } });
         toast('Empréstimo registrado!', 'success');
       }
       setShowLoan(false); setEditLoanTarget(null); load();
     } catch (e) { toast(e.message, 'error'); }
   };
 
-  const openPayment = (clientName, target) => {
-    setPaymentForm({
-      reference_type: target.type,
-      reference_id: target.id,
-      client_name: clientName,
-      amount: '',
-      payment_date: today(),
-      installment_number: '1',
-      max_installments: target.num_installments
-    });
-    setShowPayment(true);
+  const deleteSale = async (item) => {
+    if (!confirm(`Excluir a venda "${item.description}"? Pagamentos relacionados também serão removidos.`)) return;
+    try { await api(`/api/sales/${item.id}`, { method: 'DELETE' }); toast('Venda excluída!', 'success'); load(); }
+    catch (e) { toast(e.message, 'error'); }
   };
+
+  const deleteLoan = async (item) => {
+    if (!confirm(`Excluir o empréstimo "${item.description}"? Pagamentos relacionados também serão removidos.`)) return;
+    try { await api(`/api/loans/${item.id}`, { method: 'DELETE' }); toast('Empréstimo excluído!', 'success'); load(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+
+  const openPayment = (client, item) => { setPayTarget({ client, item }); setPayForm({ amount: '', payment_date: today() }); setShowPayment(true); };
 
   const savePayment = async () => {
-    if (!paymentForm.amount) return toast('Defina o valor pago', 'error');
+    if (!payForm.amount) return toast('Informe o valor', 'error');
+    const { item } = payTarget;
     try {
-      await api('/api/payments', { method: 'POST', body: paymentForm });
-      toast('Pagamento lançado!', 'success'); setShowPayment(false); load();
+      await api('/api/payments', { method: 'POST', body: { reference_type: item.type, reference_id: item.id, client_name: payTarget.client, amount: payForm.amount, payment_date: payForm.payment_date } });
+      toast('Pagamento registrado!', 'success'); setShowPayment(false); load();
     } catch (e) { toast(e.message, 'error'); }
   };
 
-  const deleteSale = async (s) => {
-    if (!confirm('Excluir essa venda? O item voltará para o estoque e o histórico de parcelas dela sumirá.')) return;
-    try {
-      await api(`/api/sales/${s.id}`, { method: 'DELETE' });
-      toast('Venda excluída', 'success'); load();
-    } catch (e) { toast(e.message, 'error'); }
-  };
-
-  const deleteLoan = async (l) => {
-    if (!confirm('Excluir empréstimo?')) return;
-    try {
-      await api(`/api/loans/${l.id}`, { method: 'DELETE' });
-      toast('Empréstimo excluído', 'success'); load();
-    } catch (e) { toast(e.message, 'error'); }
-  };
-
-  // Consolidação de devedores ativos
-  const debts = {};
-  sales.forEach(s => {
-    const bal = parseFloat(s.sale_price) - parseFloat(s.sale_paid_total);
-    if (bal > 0.05) {
-      if (!debts[s.buyer]) debts[s.buyer] = [];
-      debts[s.buyer].push({ id: s.sale_id, type: 'sale', label: s.name, total: parseFloat(s.sale_price), paid: parseFloat(s.sale_paid_total), num_installments: s.sale_installments });
-    }
-  });
-  loans.forEach(l => {
-    const bal = parseFloat(l.repayment_amount) - parseFloat(l.paid_total);
-    if (bal > 0.05) {
-      if (!debts[l.client_name]) debts[l.client_name] = [];
-      debts[l.client_name].push({ id: l.id, type: 'loan', label: l.description || 'Empréstimo em Dinheiro', total: parseFloat(l.repayment_amount), paid: parseFloat(l.paid_total), num_installments: l.num_installments, cost: l.amount, account: l.source_account });
-    }
-  });
+  const totalOwed = Object.values(overview).reduce((a, c) => a + c.total_balance, 0);
+  const totalReposto = Object.values(overview).flatMap(c => c.items).reduce((a, i) => a + i.reposto, 0);
 
   return React.createElement('div', null,
-    React.createElement('div', { style: { display: 'flex', gap: 10, marginBottom: 15 } },
-      React.createElement('button', { className: 'btn btn-green', onClick: () => { setEditSaleTarget(null); setSaleForm({ item_id: '', client_name: '', sale_price: '', num_installments: '1', sale_date: today(), quantity_sold: '1' }); setShowSale(true); } }, '＋ Registrar Venda'),
-      React.createElement('button', { className: 'btn btn-orange', onClick: () => { setEditLoanTarget(null); setLoanForm({ client_name: '', amount: '', repayment_amount: '', num_installments: '1', loan_date: today(), description: '', source_account: accounts[0]?.name || '' }); setShowLoan(true); } }, '➔ Novo Empréstimo')
+    React.createElement('div', { className: 'section-header' },
+      React.createElement('div', { className: 'section-title' }, 'Financeiro'),
+      React.createElement('div', { style: { display: 'flex', gap: 10 } },
+        React.createElement('button', { className: 'btn btn-primary', onClick: () => { setEditSaleTarget(null); setSaleForm({ item_id: '', client_name: '', sale_price: '', num_installments: '1', sale_date: today(), quantity_sold: '1' }); setShowSale(true); } }, '💰 Nova Venda'),
+        React.createElement('button', { className: 'btn btn-secondary', onClick: () => { setEditLoanTarget(null); setLoanForm({ client_name: '', amount: '', repayment_amount: '', num_installments: '1', loan_date: today(), description: '', source_account: defaultAccount }); setShowLoan(true); } }, '🤝 Novo Empréstimo')
+      )
     ),
-    React.createElement('h3', { style: { marginBottom: 10 } }, 'Debritos e Financiamentos Ativos'),
-    React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
-      Object.keys(debts).length === 0 ? React.createElement('p', { className: 'text-muted' }, 'Tudo quitado! Nenhuma pendência em aberto.') :
-      Object.entries(debts).map(([name, items]) => React.createElement('div', { key: name, className: 'card' },
-        React.createElement('h4', { style: { borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 8 } }, name),
-        React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 } },
-          items.map((item, idx) => {
-            const pending = item.total - item.paid;
-            return React.createElement('div', { key: idx, style: { background: '#f8fafc', padding: 10, borderRadius: 6, border: '1px solid #edf2f7' } },
-              React.createElement('div', { style: { fontWeight: 'bold', fontSize: 13 } }, item.label),
-              React.createElement('div', { style: { fontSize: 12, marginTop: 4 } }, `Total: ${fmt(item.total)} | Pago: ${fmt(item.paid)}`),
-              React.createElement('div', { style: { fontSize: 13, color: '#e53e3e', fontWeight: 'bold', marginTop: 2 } }, `Falta: ${fmt(pending)}`),
+    React.createElement('div', { className: 'stats-row' },
+      React.createElement('div', { className: 'stat-card' }, React.createElement('div', { className: 'stat-label' }, 'Total em Aberto'), React.createElement('div', { className: 'stat-value red' }, fmt(totalOwed))),
+      React.createElement('div', { className: 'stat-card' }, React.createElement('div', { className: 'stat-label' }, 'Reposição Pendente'), React.createElement('div', { className: 'stat-value', style: { color: '#60a5fa' } }, fmt(totalReposto)))
+    ),
+    React.createElement('div', { className: 'card-title', style: { marginBottom: 14, marginTop: 4 } }, 'Visão Geral — Quem deve'),
+    loading ? React.createElement('div', { className: 'empty' }, React.createElement('div', { className: 'spinner' })) :
+    Object.keys(overview).length === 0 ? React.createElement('div', { className: 'empty' }, React.createElement('div', { className: 'empty-icon' }, '✅'), React.createElement('p', null, 'Nenhuma dívida em aberto')) :
+    React.createElement('div', { className: 'overview-grid' },
+      Object.entries(overview).filter(([, c]) => c.total_balance > 0.01).map(([name, client]) =>
+        React.createElement('div', { key: name, className: 'overview-card' },
+          React.createElement('div', { className: 'overview-card-name' }, '👤 ' + name),
+          client.items.filter(i => i.balance > 0.01).map(item =>
+            React.createElement('div', { key: item.id, style: { marginBottom: 14, background: 'var(--surface2)', borderRadius: 8, padding: '12px 14px' } },
+              React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 } },
+                React.createElement('div', null,
+                  React.createElement('div', { style: { fontWeight: 600, fontSize: 13 } }, item.description),
+                  item.account && React.createElement('div', { style: { marginTop: 3 } }, React.createElement(AccountBadge, { account: item.account, accounts }))
+                ),
+                React.createElement('span', { style: { fontSize: 11, color: 'var(--muted)' } }, item.type === 'sale' ? '💰 Venda' : '🤝 Empréstimo')
+              ),
+              React.createElement('div', { className: 'overview-row' }, React.createElement('span', { className: 'label' }, 'Total a receber'), React.createElement('span', null, fmt(item.total))),
+              React.createElement('div', { className: 'overview-row' }, React.createElement('span', { className: 'label' }, 'Já pago'), React.createElement('span', { style: { color: 'var(--green)' } }, fmt(item.paid))),
+              React.createElement('div', { className: 'overview-row' }, React.createElement('span', { className: 'label' }, 'Saldo devedor'), React.createElement('span', { style: { color: 'var(--red)', fontWeight: 700 } }, fmt(item.balance))),
+              React.createElement('div', { style: { marginTop: 8, padding: '8px 10px', background: 'var(--surface)', borderRadius: 6, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 } },
+                React.createElement('div', null,
+                  React.createElement('div', { style: { fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 2 } }, 'Conta ' + (item.account || 'Origem')),
+                  React.createElement('div', { style: { fontSize: 13, fontWeight: 700, color: item.pending_origin > 0.01 ? '#60a5fa' : 'var(--green)' } },
+                    item.pending_origin > 0.01 ? fmt(item.pending_origin) : '✓'
+                  )
+                ),
+                React.createElement('div', null,
+                  React.createElement('div', { style: { fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 2 } }, 'Conta Lucro'),
+                  React.createElement('div', { style: { fontSize: 13, fontWeight: 700, color: item.pending_lucro > 0.01 ? 'var(--yellow)' : 'var(--green)' } },
+                    item.pending_lucro > 0.01 ? fmt(item.pending_lucro) : item.total_profit > 0 ? '✓' : '—'
+                  )
+                )
+              ),
+              React.createElement(InstallmentChecks, { total: item.total, num_installments: item.num_installments, paid: item.paid }),
               React.createElement('div', { style: { display: 'flex', gap: 6, marginTop: 10 } },
                 React.createElement('button', { className: 'btn btn-green btn-sm', style: { flex: 1, justifyContent: 'center' }, onClick: () => openPayment(name, item) }, '+ Pagamento'),
-                React.createElement('button', { className: 'btn btn-secondary btn-sm', onClick: () => {
+                React.createElement('button', { className: 'btn btn-secondary btn-sm', title: 'Editar', onClick: () => {
                   if (item.type === 'sale') {
                     setEditSaleTarget(item);
                     setSaleForm({ item_id: item.id.toString(), client_name: name, sale_price: item.total.toString(), num_installments: item.num_installments.toString(), sale_date: today(), quantity_sold: '1' });
                     setShowSale(true);
                   } else {
                     setEditLoanTarget(item);
-                    setLoanForm({ client_name: name, amount: item.cost.toString(), repayment_amount: item.total.toString(), num_installments: item.num_installments.toString(), loan_date: today(), description: item.label, source_account: item.account });
+                    setLoanForm({ client_name: name, amount: item.cost.toString(), repayment_amount: item.total.toString(), num_installments: item.num_installments.toString(), loan_date: today(), description: item.description, source_account: item.account || '' });
                     setShowLoan(true);
                   }
                 }}, '✏️'),
-                React.createElement('button', { className: 'btn btn-danger btn-sm', onClick: () => item.type === 'sale' ? deleteSale(item) : deleteLoan(item) }, '🗑️')
+                React.createElement('button', { className: 'btn btn-danger btn-sm', title: 'Excluir', onClick: () => item.type === 'sale' ? deleteSale(item) : deleteLoan(item) }, '🗑️')
               )
-            );
-          })
-        )
-      ))
-    ),
-    showSale && React.createElement('div', { className: 'modal-backdrop' },
-      React.createElement('div', { className: 'modal' },
-        React.createElement('h3', null, editSaleTarget ? 'Editar Detalhes da Venda' : 'Lançar Nova Venda'),
-        !editSaleTarget && React.createElement('div', { className: 'form-group' },
-          React.createElement('label', null, 'Selecione o Item do Estoque *'),
-          React.createElement('select', { value: saleForm.item_id, onChange: e => setSaleForm({ ...saleForm, item_id: e.target.value }) },
-            React.createElement('option', { value: '' }, 'Escolha...'),
-            stockItems.map(i => React.createElement('option', { key: i.id, value: i.id }, `${i.name} (Custo: ${fmt(i.cost)}) [${i.quantity} un]`))
-          )
-        ),
-        React.createElement('div', { className: 'form-group' },
-          React.createElement('label', null, 'Nome do Cliente *'),
-          React.createElement('input', { type: 'text', value: saleForm.client_name, onChange: e => setSaleForm({ ...saleForm, client_name: e.target.value }) })
-        ),
-        React.createElement('div', { style: { display: 'flex', gap: 10 } },
-          React.createElement('div', { className: 'form-group', style: { flex: 1 } },
-            React.createElement('label', null, 'Preço Total de Venda (R$) *'),
-            React.createElement('input', { type: 'number', value: saleForm.sale_price, onChange: e => setSaleForm({ ...saleForm, sale_price: e.target.value }) })
-          ),
-          !editSaleTarget && React.createElement('div', { className: 'form-group', style: { flex: 1 } },
-            React.createElement('label', null, 'Qtd Vendida *'),
-            React.createElement('input', { type: 'number', min: '1', value: saleForm.quantity_sold, onChange: e => setSaleForm({ ...saleForm, quantity_sold: e.target.value }) })
-          )
-        ),
-        React.createElement('div', { style: { display: 'flex', gap: 10 } },
-          React.createElement('div', { className: 'form-group', style: { flex: 1 } },
-            React.createElement('label', null, 'Parcelas'),
-            React.createElement('input', { type: 'number', min: '1', value: saleForm.num_installments, onChange: e => setSaleForm({ ...saleForm, num_installments: e.target.value }) })
-          ),
-          React.createElement('div', { className: 'form-group', style: { flex: 1 } },
-            React.createElement('label', null, 'Data'),
-            React.createElement('input', { type: 'date', value: saleForm.sale_date, onChange: e => setSaleForm({ ...saleForm, sale_date: e.target.value }) })
-          )
-        ),
-        React.createElement('div', { className: 'modal-actions' },
-          React.createElement('button', { className: 'btn btn-secondary', onClick: () => { setShowSale(false); setEditSaleTarget(null); } }, 'Cancelar'),
-          React.createElement('button', { className: 'btn btn-primary', onClick: saveSale }, 'Confirmar')
-        )
-      )
-    ),
-    showLoan && React.createElement('div', { className: 'modal-backdrop' },
-      React.createElement('div', { className: 'modal' },
-        React.createElement('h3', null, editLoanTarget ? 'Editar Empréstimo' : 'Novo Empréstimo / Financiamento'),
-        React.createElement('div', { className: 'form-group' },
-          React.createElement('label', null, 'Nome do Devedor *'),
-          React.createElement('input', { type: 'text', value: loanForm.client_name, onChange: e => setLoanForm({ ...loanForm, client_name: e.target.value }) })
-        ),
-        React.createElement('div', { className: 'form-group' },
-          React.createElement('label', null, 'Descrição / Motivo'),
-          React.createElement('input', { type: 'text', placeholder: 'Ex: Dinheiro emprestado, investimento inicial', value: loanForm.description, onChange: e => setLoanForm({ ...loanForm, description: e.target.value }) })
-        ),
-        React.createElement('div', { style: { display: 'flex', gap: 10 } },
-          React.createElement('div', { className: 'form-group', style: { flex: 1 } },
-            React.createElement('label', null, 'Valor Cedido (R$) *'),
-            React.createElement('input', { type: 'number', value: loanForm.amount, onChange: e => setLoanForm({ ...loanForm, amount: e.target.value }) })
-          ),
-          React.createElement('div', { className: 'form-group', style: { flex: 1 } },
-            React.createElement('label', null, 'Valor a Devolver (R$) *'),
-            React.createElement('input', { type: 'number', value: loanForm.repayment_amount, onChange: e => setLoanForm({ ...loanForm, repayment_amount: e.target.value }) })
-          )
-        ),
-        React.createElement('div', { className: 'form-group' },
-          React.createElement('label', null, 'Conta de Origem do Capital'),
-          React.createElement('select', { value: loanForm.source_account, onChange: e => setLoanForm({ ...loanForm, source_account: e.target.value }) },
-            React.createElement('option', { value: '' }, 'Nenhuma (Capital Próprio)'),
-            accounts.map(a => React.createElement('option', { key: a.id, value: a.name }, a.name))
-          )
-        ),
-        React.createElement('div', { style: { display: 'flex', gap: 10 } },
-          React.createElement('div', { className: 'form-group', style: { flex: 1 } },
-            React.createElement('label', null, 'Dividido em X vezes'),
-            React.createElement('input', { type: 'number', min: '1', value: loanForm.num_installments, onChange: e => setLoanForm({ ...loanForm, num_installments: e.target.value }) })
-          ),
-          React.createElement('div', { className: 'form-group', style: { flex: 1 } },
-            React.createElement('label', null, 'Data do Acordo'),
-            React.createElement('input', { type: 'date', value: loanForm.loan_date, onChange: e => setLoanForm({ ...loanForm, loan_date: e.target.value }) })
-          )
-        ),
-        React.createElement('div', { className: 'modal-actions' },
-          React.createElement('button', { className: 'btn btn-secondary', onClick: () => { setShowLoan(false); setEditLoanTarget(null); } }, 'Cancelar'),
-          React.createElement('button', { className: 'btn btn-primary', onClick: saveLoan }, 'Salvar')
-        )
-      )
-    ),
-    showPayment && React.createElement('div', { className: 'modal-backdrop' },
-      React.createElement('div', { className: 'modal' },
-        React.createElement('h3', null, `Amortizar Valor - ${paymentForm.client_name}`),
-        React.createElement('div', { className: 'form-group' },
-          React.createElement('label', null, 'Valor Recebido (R$) *'),
-          React.createElement('input', { type: 'number', value: paymentForm.amount, onChange: e => setPaymentForm({ ...paymentForm, amount: e.target.value }) })
-        ),
-        React.createElement('div', { style: { display: 'flex', gap: 10 } },
-          React.createElement('div', { className: 'form-group', style: { flex: 1 } },
-            React.createElement('label', null, 'Nº da Parcela'),
-            React.createElement('input', { type: 'number', min: '1', max: paymentForm.max_installments, value: paymentForm.installment_number, onChange: e => setPaymentForm({ ...paymentForm, installment_number: e.target.value }) })
-          ),
-          React.createElement('div', { className: 'form-group', style: { flex: 1 } },
-            React.createElement('label', null, 'Data do Recebimento'),
-            React.createElement('input', { type: 'date', value: paymentForm.payment_date, onChange: e => setPaymentForm({ ...paymentForm, payment_date: e.target.value }) })
-          )
-        ),
-        React.createElement('div', { className: 'modal-actions' },
-          React.createElement('button', { className: 'btn btn-secondary', onClick: () => setShowPayment(false) }, 'Voltar'),
-          React.createElement('button', { className: 'btn btn-green', onClick: savePayment }, 'Baixar Parcela')
-        )
-      )
-    )
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CLIENTES TAB
-// ─────────────────────────────────────────────────────────────────────────────
-function ClientesTab({ toast }) {
-  const [items, setItems] = useState([]);
-  useEffect(() => { api('/api/items').then(setItems).catch(e => toast(e.message, 'error')); }, [toast]);
-
-  const map = {};
-  items.forEach(i => {
-    if (i.buyer) {
-      if (!map[i.buyer]) map[i.buyer] = { name: i.buyer, buys: 0, total_spent: 0, profit_gen: 0 };
-      map[i.buyer].buys += parseInt(i.quantity_sold || 1);
-      map[i.buyer].total_spent += parseFloat(i.sale_price || 0);
-      map[i.buyer].profit_gen += parseFloat(i.profit || 0);
-    }
-  });
-
-  return React.createElement('div', { className: 'card', style: { padding: 0 } },
-    React.createElement('table', { className: 'table' },
-      React.createElement('thead', null,
-        React.createElement('tr', null,
-          React.createElement('th', null, 'Nome do Cliente'),
-          React.createElement('th', null, 'Total Compras'),
-          React.createElement('th', null, 'Valor Movimentado'),
-          React.createElement('th', null, 'Lucro Gerado')
-        )
-      ),
-      React.createElement('tbody', null,
-        Object.keys(map).length === 0 ? React.createElement('tr', null, React.createElement('td', { colSpan: 4, style: { textAlign: 'center' } }, 'Nenhum cliente registrado.')) :
-        Object.values(map).map(c => React.createElement('tr', { key: c.name },
-          React.createElement('td', null, React.createElement('strong', null, c.name)),
-          React.createElement('td', null, `${c.buys} un`),
-          React.createElement('td', null, fmt(c.total_spent)),
-          React.createElement('td', { style: { color: '#10b981', fontWeight: 'bold' } }, fmt(c.profit_gen))
-        ))
-      )
-    )
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HISTÓRICO PAGAMENTOS TAB
-// ─────────────────────────────────────────────────────────────────────────────
-function PagamentosTab({ toast }) {
-  const [payments, setPayments] = useState([]);
-  const load = useCallback(() => { api('/api/payments').then(setPayments).catch(e => toast(e.message, 'error')); }, [toast]);
-  useEffect(() => { load(); }, [load]);
-
-  const remove = async (id) => {
-    if (!confirm('Deseja estornar esse recebimento? A dívida do cliente aumentará novamente.')) return;
-    try {
-      await api(`/api/payments/${id}`, { method: 'DELETE' });
-      toast('Pagamento estornado!', 'success'); load();
-    } catch (e) { toast(e.message, 'error'); }
-  };
-
-  return React.createElement('div', { className: 'card', style: { padding: 0 } },
-    React.createElement('table', { className: 'table' },
-      React.createElement('thead', null,
-        React.createElement('tr', null,
-          React.createElement('th', null, 'Data'),
-          React.createElement('th', null, 'Cliente'),
-          React.createElement('th', null, 'Origem'),
-          React.createElement('th', null, 'Parcela'),
-          React.createElement('th', null, 'Valor Pago'),
-          React.createElement('th', { style: { textAlign: 'right' } }, 'Estorno')
-        )
-      ),
-      React.createElement('tbody', null,
-        payments.length === 0 ? React.createElement('tr', null, React.createElement('td', { colSpan: 6, style: { textAlign: 'center' } }, 'Nenhum pagamento registrado.')) :
-        payments.map(p => React.createElement('tr', { key: p.id },
-          React.createElement('td', null, fmtDate(p.payment_date)),
-          React.createElement('td', null, React.createElement('strong', null, p.client_name)),
-          React.createElement('td', null, React.createElement('span', { className: 'badge' }, p.reference_type === 'sale' ? 'Venda Estoque' : 'Empréstimo')),
-          React.createElement('td', null, `${p.installment_number}ª`),
-          React.createElement('td', { style: { color: '#10b981', fontWeight: 'bold' } }, fmt(p.amount)),
-          React.createElement('td', { style: { textAlign: 'right' } },
-            React.createElement('button', { className: 'btn btn-danger btn-sm', onClick: () => remove(p.id) }, '🗑️')
-          )
-        ))
-      )
-    )
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HISTÓRICO VENDAS TAB (DASHBOARD)
-// ─────────────────────────────────────────────────────────────────────────────
-function VendasTab({ toast }) {
-  const [months, setMonths] = useState([]);
-  useEffect(() => { api('/api/sales-by-month').then(setMonths).catch(e => toast(e.message, 'error')); }, [toast]);
-
-  return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 15 } },
-    months.map(m => React.createElement('div', { key: m.month, className: 'card', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-      React.createElement('div', null,
-        React.createElement('h3', null, monthLabel(m.month)),
-        React.createElement('span', { className: 'text-muted', style: { fontSize: 13 } }, 'Faturamento Bruto Total')
-      ),
-      React.createElement('div', { style: { textAlign: 'right' } },
-        React.createElement('div', { style: { fontSize: 22, fontWeight: 'bold', color: '#2563eb' } }, fmt(m.total_sales)),
-        React.createElement('div', { style: { fontSize: 14, color: '#10b981', fontWeight: 'bold' } }, `Lucro Líquido: ${fmt(m.total_profit)}`)
-      )
-    ))
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CONTAS TAB (ROMBO REAL COMPLETO)
-// ─────────────────────────────────────────────────────────────────────────────
-function ContasTab({ toast, accounts, onAddAccount }) {
-  const [balances, setBalances] = useState([]);
-  const [newAccount, setNewAccount] = useState('');
-
-  const load = useCallback(() => { api('/api/account-balance').then(setBalances).catch(e => toast(e.message, 'error')); }, [toast]);
-  useEffect(() => { load(); }, [load]);
-
-  const createAccount = async () => {
-    if (!newAccount.trim()) return;
-    try {
-      await api('/api/accounts', { method: 'POST', body: { name: newAccount } });
-      toast('Nova conta de aporte adicionada!', 'success'); setNewAccount(''); onAddAccount(); load();
-    } catch (e) { toast(e.message, 'error'); }
-  };
-
-  return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 20 } },
-    React.createElement('div', { className: 'card', style: { background: '#f8fafc' } },
-      React.createElement('h3', { style: { marginBottom: 10 } }, 'Adicionar Nova Conta de Aporte/Capital'),
-      React.createElement('div', { style: { display: 'flex', gap: 10 } },
-        React.createElement('input', { type: 'text', placeholder: 'Nome da Conta (Ex: Sofisa, Cartão Ju, Itaú)', value: newAccount, onChange: e => setNewAccount(e.target.value), style: { flex: 1 } }),
-        React.createElement('button', { className: 'btn btn-primary', onClick: createAccount }, 'Cadastrar')
-      )
-    ),
-    React.createElement('h3', null, 'Déficit e Fluxo de Reposição de Capital'),
-    balances.length === 0 ? React.createElement('p', { className: 'text-muted' }, 'Nenhuma conta está negativa ou com saldo pendente de devolução!') :
-    balances.map(b => React.createElement('div', { key: b.account, className: 'card' },
-      React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', borderBottom: '2px solid #e2e8f0', paddingBottom: 6, marginBottom: 10, flexWrap: 'wrap' } },
-        React.createElement('h3', null, b.is_lucro_virtual ? '📈 Projeção e Distribuição de Lucros' : `🏦 Conta: ${b.account}`),
-        React.createElement('div', { style: { textAlign: 'right' } },
-          React.createElement('span', { style: { fontSize: 12, color: '#64748b', block: 'block' } }, b.is_lucro_virtual ? 'Lucro Líquido a Receber:' : 'A Devolver para Origem:'),
-          React.createElement('div', { style: { fontSize: 20, fontWeight: 'bold', color: b.is_lucro_virtual ? '#10b981' : '#e53e3e' } }, fmt(b.pending_reposto))
-        )
-      ),
-      React.createElement('div', { style: { display: 'flex', gap: 20, marginBottom: 15, fontSize: 13, color: '#475569', flexWrap: 'wrap' } },
-        React.createElement('div', null, `${b.is_lucro_virtual ? 'Total Projetado:' : 'Total Aportado:'} `, React.createElement('strong', null, fmt(b.total_invested))),
-        React.createElement('div', null, `${b.is_lucro_virtual ? 'Já Retirado:' : 'Já Reposto:'} `, React.createElement('strong', { style: { color: '#10b981' } }, fmt(b.total_reposto)))
-      ),
-      React.createElement('div', { style: { overflowX: 'auto' } },
-        React.createElement('table', { className: 'table', style: { fontSize: 13 } },
-          React.createElement('thead', null,
-            React.createElement('tr', null,
-              React.createElement('th', null, 'Descrição / Item'),
-              React.createElement('th', null, 'Cliente/Status'),
-              React.createElement('th', null, b.is_lucro_virtual ? 'Lucro Margem' : 'Custo Original'),
-              React.createElement('th', null, 'Amortizado'),
-              React.createElement('th', null, 'Pendente')
             )
           ),
-          React.createElement('tbody', null,
-            b.entries.map((e, idx) => React.createElement('tr', { key: idx },
-              React.createElement('td', null, e.item),
-              React.createElement('td', null, React.createElement('span', { className: 'text-muted' }, e.client)),
-              React.createElement('td', null, fmt(e.cost)),
-              React.createElement('td', { style: { color: '#10b981' } }, fmt(e.reposto)),
-              React.createElement('td', { style: { color: '#e53e3e', fontWeight: 'bold' } }, fmt(e.pending))
-            ))
+          React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' } },
+            React.createElement('span', { style: { color: 'var(--muted)', fontSize: 12 } }, 'Total devendo'),
+            React.createElement('span', { style: { color: 'var(--red)', fontWeight: 700 } }, fmt(client.total_balance))
           )
         )
       )
-    ))
+    ),
+
+    // FORMULÁRIO VENDA (CREATION / EDIT)
+    showSale && React.createElement(Modal, { title: editSaleTarget ? '✏️ Editar Venda' : '💰 Nova Venda', onClose: () => { setShowSale(false); setEditSaleTarget(null); } },
+      React.createElement('div', { className: 'form-grid' },
+        !editSaleTarget && React.createElement('div', { className: 'form-group', style: { gridColumn: '1/-1' } },
+          React.createElement('label', null, 'Item do Estoque *'),
+          React.createElement('select', { value: saleForm.item_id, onChange: e => { const it = items.find(i => i.id == e.target.value); setSaleForm({ ...saleForm, item_id: e.target.value, sale_price: it ? it.cost : '' }); } },
+            React.createElement('option', { value: '' }, 'Selecione um item...'),
+            items.map(i => React.createElement('option', { key: i.id, value: i.id }, `${i.name} — Unidade: ${fmt(i.cost)} [Disp: ${i.quantity} un]`))
+          )
+        ),
+        React.createElement('div', { className: 'form-group', style: { gridColumn: '1/-1' } },
+          React.createElement('label', null, 'Comprador *'),
+          React.createElement('input', { value: saleForm.client_name, onChange: e => setSaleForm({ ...saleForm, client_name: e.target.value }), placeholder: 'Nome do comprador' })
+        ),
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', null, 'Valor Total de Venda (R$) *'),
+          React.createElement('input', { type: 'number', step: '0.01', value: saleForm.sale_price, onChange: e => setSaleForm({ ...saleForm, sale_price: e.target.value }) })
+        ),
+        !editSaleTarget && React.createElement('div', { className: 'form-group' },
+          React.createElement('label', null, 'Qtd Vendida *'),
+          React.createElement('input', { type: 'number', min: '1', value: saleForm.quantity_sold, onChange: e => setSaleForm({ ...saleForm, quantity_sold: e.target.value }) })
+        ),
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', null, 'Parcelas'),
+          React.createElement('input', { type: 'number', min: '1', value: saleForm.num_installments, onChange: e => setSaleForm({ ...saleForm, num_installments: e.target.value }) })
+        ),
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', null, 'Data da Venda'),
+          React.createElement('input', { type: 'date', value: saleForm.sale_date, onChange: e => setSaleForm({ ...saleForm, sale_date: e.target.value }) })
+        )
+      ),
+      React.createElement('div', { className: 'modal-footer' },
+        React.createElement('button', { className: 'btn btn-secondary', onClick: () => { setShowSale(false); setEditSaleTarget(null); } }, 'Cancelar'),
+        React.createElement('button', { className: 'btn btn-primary', onClick: saveSale }, editSaleTarget ? 'Atualizar Venda' : 'Registrar Venda')
+      )
+    ),
+
+    // FORMULÁRIO EMPRÉSTIMO (CREATION / EDIT)
+    showLoan && React.createElement(Modal, { title: editLoanTarget ? '✏️ Editar Empréstimo' : '🤝 Novo Empréstimo', onClose: () => { setShowLoan(false); setEditLoanTarget(null); } },
+      React.createElement('div', { className: 'form-grid' },
+        React.createElement('div', { className: 'form-group', style: { gridColumn: '1/-1' } },
+          React.createElement('label', null, 'Para quem *'),
+          React.createElement('input', { value: loanForm.client_name, onChange: e => setLoanForm({ ...loanForm, client_name: e.target.value }), placeholder: 'Nome' })
+        ),
+        React.createElement('div', { className: 'form-group', style: { gridColumn: '1/-1' } },
+          React.createElement('label', null, 'Descrição'),
+          React.createElement('input', { value: loanForm.description, onChange: e => setLoanForm({ ...loanForm, description: e.target.value }), placeholder: 'Motivo, produto emprestado...' })
+        ),
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', null, 'Valor Emprestado (R$) *'),
+          React.createElement('input', { type: 'number', step: '0.01', value: loanForm.amount, onChange: e => setLoanForm({ ...loanForm, amount: e.target.value }), placeholder: 'Quanto saiu' })
+        ),
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', null, 'Valor a Receber (R$)'),
+          React.createElement('input', { type: 'number', step: '0.01', value: loanForm.repayment_amount, onChange: e => setLoanForm({ ...loanForm, repayment_amount: e.target.value }), placeholder: 'Deixar em branco = sem juros' })
+        ),
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', null, 'Conta de Origem'),
+          React.createElement('select', { value: loanForm.source_account, onChange: e => setLoanForm({ ...loanForm, source_account: e.target.value }) },
+            React.createElement('option', { value: '' }, '— Nenhuma —'),
+            (accounts || []).map(a => React.createElement('option', { key: a.id, value: a.name }, a.name))
+          )
+        ),
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', null, 'Parcelas'),
+          React.createElement('input', { type: 'number', min: '1', value: loanForm.num_installments, onChange: e => setLoanForm({ ...loanForm, num_installments: e.target.value }) })
+        ),
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', null, 'Data'),
+          React.createElement('input', { type: 'date', value: loanForm.loan_date, onChange: e => setLoanForm({ ...loanForm, loan_date: e.target.value }) })
+        )
+      ),
+      React.createElement('div', { className: 'modal-footer' },
+        React.createElement('button', { className: 'btn btn-secondary', onClick: () => { setShowLoan(false); setEditLoanTarget(null); } }, 'Cancelar'),
+        React.createElement('button', { className: 'btn btn-primary', onClick: saveLoan }, editLoanTarget ? 'Atualizar Empréstimo' : 'Registrar Empréstimo')
+      )
+    ),
+
+    // REGISTRAR PAGAMENTO
+    showPayment && payTarget && React.createElement(Modal, { title: `💳 Registrar Pagamento — ${payTarget.client}`, onClose: () => setShowPayment(false) },
+      React.createElement('div', { style: { background: 'var(--surface2)', borderRadius: 8, padding: '12px 14px', marginBottom: 18 } },
+        React.createElement('div', { style: { fontWeight: 600, marginBottom: 6 } }, payTarget.item.description),
+        React.createElement('div', { style: { display: 'flex', gap: 20, fontSize: 12, color: 'var(--muted)' } },
+          React.createElement('span', null, 'Total: ', React.createElement('strong', { style: { color: 'var(--text)' } }, fmt(payTarget.item.total))),
+          React.createElement('span', null, 'Saldo: ', React.createElement('strong', { style: { color: 'var(--red)' } }, fmt(payTarget.item.balance)))
+        ),
+        React.createElement(InstallmentChecks, { total: payTarget.item.total, num_installments: payTarget.item.num_installments, paid: payTarget.item.paid })
+      ),
+      React.createElement('div', { className: 'form-grid' },
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', null, 'Valor Recebido (R$) *'),
+          React.createElement('input', { type: 'number', step: '0.01', value: payForm.amount, onChange: e => setPayForm({ ...payForm, amount: e.target.value }), placeholder: fmt(payTarget.item.total / payTarget.item.num_installments) })
+        ),
+        React.createElement('div', { className: 'form-group' },
+          React.createElement('label', null, 'Data do Pagamento'),
+          React.createElement('input', { type: 'date', value: payForm.payment_date, onChange: e => setPayForm({ ...payForm, payment_date: e.target.value }) })
+        )
+      ),
+      React.createElement('div', { className: 'modal-footer' },
+        React.createElement('button', { className: 'btn btn-secondary', onClick: () => setShowPayment(false) }, 'Cancelar'),
+        React.createElement('button', { className: 'btn btn-green', onClick: savePayment }, '✔ Confirmar')
+      )
+    )
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// APP PRINCIPAL
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── CLIENTES TAB ────────────────────────────────────────────────────────────
+function ClientesTab({ toast }) {
+  const [overview, setOverview] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    api('/api/financial-overview').then(setOverview).catch(e => toast(e.message, 'error')).finally(() => setLoading(false));
+  }, [toast]);
+
+  const entries = Object.entries(overview)
+    .filter(([name]) => !search || name.toLowerCase().includes(search.toLowerCase()));
+
+  return React.createElement('div', null,
+    React.createElement('div', { className: 'section-header' },
+      React.createElement('div', { className: 'section-title' }, 'Clientes'),
+      React.createElement('input', { className: 'search-bar', placeholder: '🔍 Buscar cliente...', value: search, onChange: e => setSearch(e.target.value) })
+    ),
+    loading ? React.createElement('div', { className: 'empty' }, React.createElement('div', { className: 'spinner' })) :
+    entries.length === 0 ? React.createElement('div', { className: 'empty' }, React.createElement('div', { className: 'empty-icon' }, '👥'), React.createElement('p', null, 'Nenhum cliente cadastrado')) :
+    React.createElement('div', { className: 'client-grid' },
+      entries.map(([name, client]) => {
+        const openItems = client.items.filter(i => i.balance > 0.01);
+        const openBalance = openItems.reduce((a, i) => a + i.balance, 0);
+        return React.createElement('div', { key: name, className: 'client-card' },
+          React.createElement('div', { className: 'client-header' },
+            React.createElement('div', { className: 'client-name' }, '👤 ' + name),
+            React.createElement('div', { className: 'client-total' },
+              React.createElement('span', null, 'Deve: ', React.createElement('span', { style: { color: 'var(--red)', fontWeight: 700 } }, fmt(openBalance)))
+            )
+          ),
+          React.createElement('div', { className: 'client-items' },
+            client.items.map((item, idx) => {
+              const completedLabel = `${item.completed_installments}/${item.num_installments}`;
+              return React.createElement('div', { key: idx, className: 'client-item' },
+                React.createElement('div', null,
+                  React.createElement('div', { className: 'client-item-desc' },
+                    item.description,
+                    React.createElement('span', { style: { marginLeft: 8, fontSize: 11, color: 'var(--muted)', fontWeight: 600 } }, `(${completedLabel})`)
+                  ),
+                  React.createElement('div', { className: 'client-item-sub' }, item.type === 'sale' ? '💰 Venda' : '🤝 Empréstimo', item.account ? ` · ${item.account}` : '')
+                ),
+                React.createElement('div', null,
+                  React.createElement('div', { className: 'client-item-label' }, 'Total'),
+                  React.createElement('div', { className: 'client-item-val' }, fmt(item.total))
+                ),
+                React.createElement('div', null,
+                  React.createElement('div', { className: 'client-item-label' }, 'Pago'),
+                  React.createElement('div', { className: 'client-item-val', style: { color: 'var(--green)' } }, fmt(item.paid))
+                ),
+                React.createElement('div', null,
+                  React.createElement('div', { className: 'client-item-label' }, 'Saldo'),
+                  React.createElement('div', { className: 'client-item-val', style: { color: item.balance > 0.01 ? 'var(--red)' : 'var(--green)' } }, fmt(Math.max(0, item.balance)))
+                )
+              );
+            })
+          )
+        );
+      })
+    )
+  );
+}
+
+// ─── HISTÓRICO DE PAGAMENTOS ─────────────────────────────────────────────────
+function PagamentosTab({ toast }) {
+  const [payments, setPayments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedMonth, setExpandedMonth] = useState(null);
+
+  useEffect(() => {
+    api('/api/payments').then(data => {
+      setPayments(data);
+      if (data.length > 0) {
+        const firstMonth = data[0].payment_date ? data[0].payment_date.slice(0, 7) : null;
+        setExpandedMonth(firstMonth);
+      }
+    }).catch(e => toast(e.message, 'error')).finally(() => setLoading(false));
+  }, [toast]);
+
+  const byMonth = {};
+  for (const p of payments) {
+    const m = p.payment_date ? p.payment_date.slice(0, 7) : 'Sem data';
+    if (!byMonth[m]) byMonth[m] = [];
+    byMonth[m].push(p);
+  }
+  const months = Object.keys(byMonth).sort((a, b) => b.localeCompare(a));
+
+  return React.createElement('div', null,
+    React.createElement('div', { className: 'section-header' },
+      React.createElement('div', { className: 'section-title' }, 'Histórico de Pagamentos')
+    ),
+    loading ? React.createElement('div', { className: 'empty' }, React.createElement('div', { className: 'spinner' })) :
+    months.length === 0 ? React.createElement('div', { className: 'empty' }, React.createElement('div', { className: 'empty-icon' }, '💳'), React.createElement('p', null, 'Nenhum pagamento registrado')) :
+    React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+      months.map(m => {
+        const isExp = expandedMonth === m;
+        const monthPayments = byMonth[m];
+        const totalMonth = monthPayments.reduce((a, p) => a + parseFloat(p.amount || 0), 0);
+        return React.createElement('div', { key: m, className: 'card', style: { padding: 0, overflow: 'hidden' } },
+          React.createElement('div', {
+            style: { padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' },
+            onClick: () => setExpandedMonth(isExp ? null : m)
+          },
+            React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 16 } },
+              React.createElement('div', { style: { fontWeight: 700, fontSize: 15 } }, monthLabel(m)),
+              React.createElement('div', { style: { display: 'flex', gap: 14, fontSize: 13, color: 'var(--muted)' } },
+                React.createElement('span', null, `${monthPayments.length} pagamento${monthPayments.length !== 1 ? 's' : ''}`),
+                React.createElement('span', { style: { color: 'var(--green)', fontWeight: 600 } }, '+ ' + fmt(totalMonth))
+              )
+            ),
+            React.createElement('span', { style: { color: 'var(--muted)', fontSize: 12 } }, isExp ? '▲ Fechar' : '▼ Ver detalhes')
+          ),
+          isExp && React.createElement('div', { style: { borderTop: '1px solid var(--border)' } },
+            React.createElement('div', { style: { display: 'flex', gap: 16, padding: '12px 18px', background: 'var(--surface2)', borderBottom: '1px solid var(--border)' } },
+              React.createElement('div', { className: 'stat-card', style: { flex: 1 } }, React.createElement('div', { className: 'stat-label' }, 'Registros'), React.createElement('div', { className: 'stat-value accent' }, monthPayments.length)),
+              React.createElement('div', { className: 'stat-card', style: { flex: 1 } }, React.createElement('div', { className: 'stat-label' }, 'Total Recebido'), React.createElement('div', { className: 'stat-value green' }, fmt(totalMonth)))
+            ),
+            React.createElement('div', { className: 'table-wrap', style: { padding: '0 0 4px' } },
+              React.createElement('table', null,
+                React.createElement('thead', null, React.createElement('tr', null,
+                  ['Data', 'Pessoa', 'Item / Descrição', 'Valor Pago', 'Parcela', 'Saldo Devedor'].map(h => React.createElement('th', { key: h }, h))
+                )),
+                React.createElement('tbody', null, monthPayments.map(p => {
+                  const total = parseFloat(p.total_value || 0);
+                  const cumPaid = parseFloat(p.cumulative_paid || p.amount || 0);
+                  const saldo = Math.max(0, total - cumPaid);
+                  return React.createElement('tr', { key: p.id },
+                    React.createElement('td', null, fmtDate(p.payment_date)),
+                    React.createElement('td', null, React.createElement('strong', null, p.client_name)),
+                    React.createElement('td', null,
+                      React.createElement('div', null, p.item_name || '—'),
+                      React.createElement('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 2 } }, p.reference_type === 'sale' ? '💰 Venda' : '🤝 Empréstimo')
+                    ),
+                    React.createElement('td', null, React.createElement('span', { style: { color: 'var(--green)', fontWeight: 600 } }, fmt(p.amount))),
+                    React.createElement('td', null, React.createElement('span', { className: 'badge badge-estoque' }, `${p.installment_number}/${p.total_installments}`)),
+                    React.createElement('td', null, React.createElement('span', { style: { color: saldo > 0 ? 'var(--red)' : 'var(--green)', fontWeight: 600 } }, fmt(saldo)))
+                  );
+                }))
+              )
+            )
+          )
+        );
+      })
+    )
+  );
+}
+
+// ─── HISTÓRICO DE VENDAS ─────────────────────────────────────────────────────
+function VendasTab({ toast }) {
+  const [history, setHistory] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedMonth, setExpandedMonth] = useState(null);
+
+  useEffect(() => {
+    api('/api/sales-history').then(data => {
+      setHistory(data);
+      if (data.length > 0) setExpandedMonth(data[0].month);
+    }).catch(e => toast(e.message, 'error')).finally(() => setLoading(false));
+  }, [toast]);
+
+  return React.createElement('div', null,
+    React.createElement('div', { className: 'section-header' },
+      React.createElement('div', { className: 'section-title' }, 'Histórico de Vendas')
+    ),
+    loading ? React.createElement('div', { className: 'empty' }, React.createElement('div', { className: 'spinner' })) :
+    history.length === 0 ? React.createElement('div', { className: 'empty' }, React.createElement('div', { className: 'empty-icon' }, '📊'), React.createElement('p', null, 'Nenhuma venda registrada')) :
+    React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+      history.map(h => {
+        const isExp = expandedMonth === h.month;
+        const margin = parseFloat(h.total_invested) > 0 ? ((parseFloat(h.total_profit) / parseFloat(h.total_invested)) * 100).toFixed(0) : 0;
+        return React.createElement('div', { key: h.month, className: 'card', style: { padding: 0, overflow: 'hidden' } },
+          React.createElement('div', {
+            style: { padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' },
+            onClick: () => setExpandedMonth(isExp ? null : h.month)
+          },
+            React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 16 } },
+              React.createElement('div', { style: { fontWeight: 700, fontSize: 15 } }, monthLabel(h.month)),
+              React.createElement('div', { style: { display: 'flex', gap: 14, fontSize: 13, color: 'var(--muted)' } },
+                React.createElement('span', null, `${h.sales.length} venda${h.sales.length !== 1 ? 's' : ''}`),
+                React.createElement('span', { style: { color: 'var(--green)', fontWeight: 600 } }, '+' + fmt(h.total_profit)),
+                React.createElement('span', { style: { color: 'var(--muted)' } }, `(${margin}% margem)`)
+              )
+            ),
+            React.createElement('span', { style: { color: 'var(--muted)', fontSize: 12 } }, isExp ? '▲ Fechar' : '▼ Ver detalhes')
+          ),
+          isExp && React.createElement('div', { style: { borderTop: '1px solid var(--border)' } },
+            React.createElement('div', { style: { display: 'flex', gap: 12, padding: '12px 18px', background: 'var(--surface2)', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' } },
+              React.createElement('div', { className: 'stat-card', style: { flex: 1, minWidth: 120 } }, React.createElement('div', { className: 'stat-label' }, 'Vendas'), React.createElement('div', { className: 'stat-value accent' }, h.sales.length)),
+              React.createElement('div', { className: 'stat-card', style: { flex: 1, minWidth: 120 } }, React.createElement('div', { className: 'stat-label' }, 'Investido'), React.createElement('div', { className: 'stat-value red' }, fmt(h.total_invested))),
+              React.createElement('div', { className: 'stat-card', style: { flex: 1, minWidth: 120 } }, React.createElement('div', { className: 'stat-label' }, 'Faturado'), React.createElement('div', { className: 'stat-value yellow' }, fmt(h.total_revenue))),
+              React.createElement('div', { className: 'stat-card', style: { flex: 1, minWidth: 120 } }, React.createElement('div', { className: 'stat-label' }, 'Lucro Bruto'), React.createElement('div', { className: 'stat-value green' }, fmt(h.total_profit)))
+            ),
+            React.createElement('div', { className: 'table-wrap', style: { padding: '0 0 4px' } },
+              React.createElement('table', null,
+                React.createElement('thead', null, React.createElement('tr', null,
+                  ['', 'Data', 'Produto / Descrição', 'Cliente', 'Conta', 'Investido', 'Venda', 'Lucro Lote', 'Recebido'].map(col => React.createElement('th', { key: col }, col))
+                )),
+                React.createElement('tbody', null, h.sales.map((s, idx) => {
+                  const profit = parseFloat(s.profit || 0);
+                  const revenue = parseFloat(s.revenue || 0);
+                  const paidTotal = parseFloat(s.paid_total || 0);
+                  const isQuitado = paidTotal >= revenue - 0.01;
+                  return React.createElement('tr', { key: idx },
+                    React.createElement('td', null,
+                      isQuitado
+                        ? React.createElement('span', { title: 'Quitado', style: { color: 'var(--green)', fontSize: 16 } }, '✅')
+                        : React.createElement('span', { title: 'Pendente', style: { color: 'var(--yellow)', fontSize: 14 } }, '⏳')
+                    ),
+                    React.createElement('td', null, fmtDate(s.sale_date)),
+                    React.createElement('td', null,
+                      React.createElement('strong', null, s.item_name || '—'),
+                      React.createElement('div', { style: { fontSize: 11, color: 'var(--muted)', marginTop: 2 } }, s.entry_type === 'loan' ? '🤝 Empréstimo c/ juros' : '💰 Venda' + (parseInt(s.quantity_sold) > 1 ? ` (${s.quantity_sold} un)` : ''))
+                    ),
+                    React.createElement('td', null, s.client_name),
+                    React.createElement('td', null, s.account ? React.createElement('span', { className: 'badge badge-sofisa' }, s.account) : '—'),
+                    React.createElement('td', null, React.createElement('span', { style: { color: 'var(--red)' } }, fmt(parseFloat(s.invested || 0) * (parseInt(s.quantity_sold) || 1)))),
+                    React.createElement('td', null, React.createElement('span', { style: { color: 'var(--yellow)' } }, fmt(s.revenue))),
+                    React.createElement('td', null, React.createElement('span', { style: { color: profit >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 700 } }, fmt(profit))),
+                    React.createElement('td', null, React.createElement('span', { style: { color: 'var(--muted)' } }, fmt(s.paid_total)))
+                  );
+                }))
+              )
+            )
+          )
+        );
+      })
+    )
+  );
+}
+
+// ─── CONTAS TAB ──────────────────────────────────────────────────────────────
+function ContasTab({ toast, accounts, reloadAccounts }) {
+  const [newName, setNewName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [balance, setBalance] = useState([]);
+  const [loadingBal, setLoadingBal] = useState(true);
+  const [expandedAccount, setExpandedAccount] = useState(null);
+
+  const loadBalance = useCallback(async () => {
+    try { setBalance(await api('/api/account-balance')); } catch (e) { toast(e.message, 'error'); } finally { setLoadingBal(false); }
+  }, [toast]);
+  useEffect(() => { loadBalance(); }, [loadBalance]);
+
+  const addAccount = async () => {
+    if (!newName.trim()) return toast('Digite o nome da conta', 'error');
+    setSaving(true);
+    try { await api('/api/accounts', { method: 'POST', body: { name: newName.trim() } }); toast('Conta criada!', 'success'); setNewName(''); reloadAccounts(); loadBalance(); }
+    catch (e) { toast(e.message, 'error'); }
+    finally { setSaving(false); }
+  };
+
+  const del = async (acc) => {
+    if (!confirm(`Excluir a conta "${acc.name}"?`)) return;
+    try { await api(`/api/accounts/${acc.id}`, { method: 'DELETE' }); toast('Conta excluída!', 'success'); reloadAccounts(); loadBalance(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+
+  const totalPending = balance.filter(b => !b.is_lucro_virtual).reduce((a, b) => a + parseFloat(b.pending_reposto || 0), 0);
+  const totalReposto = balance.filter(b => !b.is_lucro_virtual).reduce((a, b) => a + parseFloat(b.total_reposto || 0), 0);
+
+  return React.createElement('div', null,
+    React.createElement('div', { className: 'section-header' },
+      React.createElement('div', { className: 'section-title' }, 'Contas')
+    ),
+    React.createElement('div', { className: 'stats-row' },
+      React.createElement('div', { className: 'stat-card' }, React.createElement('div', { className: 'stat-label' }, 'Contas Cadastradas'), React.createElement('div', { className: 'stat-value accent' }, accounts.length)),
+      React.createElement('div', { className: 'stat-card' }, React.createElement('div', { className: 'stat-label' }, 'Já Reposto'), React.createElement('div', { className: 'stat-value green' }, fmt(totalReposto))),
+      React.createElement('div', { className: 'stat-card' }, React.createElement('div', { className: 'stat-label' }, 'Rombo/Déficit Atual'), React.createElement('div', { className: 'stat-value red' }, fmt(totalPending)))
+    ),
+    !loadingBal && balance.length > 0 && React.createElement('div', { style: { marginBottom: 20 } },
+      React.createElement('div', { className: 'card-title', style: { marginBottom: 12 } }, 'Saldo por Conta — Detalhamento'),
+      React.createElement('div', { style: { display: 'grid', gap: 10 } },
+        balance.map(b => {
+          const isExp = expandedAccount === b.account;
+          const isLucro = b.is_lucro_virtual;
+          return React.createElement('div', { key: b.account, className: 'card', style: { padding: 0, overflow: 'hidden', border: isLucro ? '1px solid rgba(74,222,128,.3)' : undefined } },
+            React.createElement('div', {
+              style: { padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' },
+              onClick: () => setExpandedAccount(isExp ? null : b.account)
+            },
+              React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 12 } },
+                isLucro
+                  ? React.createElement('span', { className: 'badge badge-vendido', style: { fontSize: 12 } }, '💰 Conta Lucro')
+                  : React.createElement(AccountBadge, { account: b.account, accounts }),
+                React.createElement('div', null,
+                  React.createElement('div', { style: { fontSize: 14, fontWeight: 700, color: b.pending_reposto > 0.01 ? (isLucro ? 'var(--yellow)' : 'var(--red)') : 'var(--green)' } },
+                    b.pending_reposto > 0.01 ? fmt(b.pending_reposto) + ' pendente' : '✓ Em dia'
+                  )
+                )
+              ),
+              React.createElement('span', { style: { color: 'var(--muted)', fontSize: 12 } }, isExp ? '▲ Fechar' : '▼ Detalhar')
+            ),
+            isExp && React.createElement('div', { style: { borderTop: '1px solid var(--border)', padding: '0 18px 14px' } },
+              isLucro && React.createElement('div', { style: { padding: '10px 0 8px', fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' } },
+                'Todo o lucro vai para esta conta. Os valores abaixo mostram o lucro gerado por cada venda.'
+              ),
+              React.createElement('table', { style: { width: '100%' } },
+                React.createElement('thead', null, React.createElement('tr', null,
+                  isLucro
+                    ? ['Tipo', 'Produto', 'Cliente/Status', 'Lucro Total', 'Já Depositado', 'A Depositar'].map(h => React.createElement('th', { key: h }, h))
+                    : ['Tipo', 'Produto', 'Cliente/Status', 'Custo Total', 'Reposto', 'A Depositar', 'Lucro'].map(h => React.createElement('th', { key: h }, h))
+                )),
+                React.createElement('tbody', null, b.entries.map((e, i) =>
+                  React.createElement('tr', { key: i },
+                    React.createElement('td', null, React.createElement('span', { className: 'badge', style: { background: e.type === 'sale' ? '#1a3a25' : e.type === 'loan' ? '#1a2a3a' : '#2b2212', color: e.type === 'sale' ? 'var(--green)' : e.type === 'loan' ? 'var(--accent2)' : 'var(--yellow)' } }, e.type === 'sale' ? '💰' : e.type === 'loan' ? '🤝' : '📦')),
+                    React.createElement('td', null, e.item || '—'),
+                    React.createElement('td', null, e.client),
+                    isLucro
+                      ? React.Fragment.createElement(React.Fragment, null,
+                          React.createElement('td', null, React.createElement('span', { style: { color: 'var(--yellow)', fontWeight: 600 } }, fmt(e.cost))),
+                          React.createElement('td', null, React.createElement('span', { style: { color: 'var(--green)' } }, fmt(e.reposto))),
+                          React.createElement('td', null, React.createElement('span', { style: { color: e.pending > 0.01 ? 'var(--yellow)' : 'var(--green)', fontWeight: 600 } }, e.pending > 0.01 ? fmt(e.pending) : '✓'))
+                        )
+                      : React.Fragment.createElement(React.Fragment, null,
+                          React.createElement('td', null, fmt(e.cost)),
+                          React.createElement('td', null, React.createElement('span', { style: { color: '#60a5fa' } }, fmt(e.reposto))),
+                          React.createElement('td', null, React.createElement('span', { style: { color: e.pending > 0.01 ? 'var(--red)' : 'var(--green)', fontWeight: 600 } }, e.pending > 0.01 ? fmt(e.pending) : '✓')),
+                          React.createElement('td', null, React.createElement('span', { style: { color: 'var(--green)' } }, fmt(e.lucro)))
+                        )
+                  )
+                ))
+              )
+            )
+          );
+        })
+      )
+    ),
+    React.createElement('div', { className: 'card', style: { marginBottom: 16 } },
+      React.createElement('div', { className: 'card-title' }, 'Adicionar Nova Conta'),
+      React.createElement('div', { style: { display: 'flex', gap: 10 } },
+        React.createElement('input', { value: newName, onChange: e => setNewName(e.target.value), onKeyDown: e => e.key === 'Enter' && addAccount(), placeholder: 'Ex: Nubank, PJ, Reserva...', style: { maxWidth: 360 } }),
+        React.createElement('button', { className: 'btn btn-primary', onClick: addAccount, disabled: saving }, saving ? '...' : '+ Adicionar')
+      )
+    ),
+    React.createElement('div', { className: 'card' },
+      React.createElement('div', { className: 'card-title' }, `${accounts.length} conta${accounts.length !== 1 ? 's' : ''} cadastrada${accounts.length !== 1 ? 's' : ''}`),
+      accounts.length === 0 ? React.createElement('div', { className: 'empty' }, React.createElement('p', null, 'Nenhuma conta')) :
+      React.createElement('div', { className: 'table-wrap' },
+        React.createElement('table', null,
+          React.createElement('thead', null, React.createElement('tr', null,
+            React.createElement('th', null, '#'),
+            React.createElement('th', null, 'Nome'),
+            React.createElement('th', null, 'Criada em'),
+            React.createElement('th', null, '')
+          )),
+          React.createElement('tbody', null, accounts.map((acc, i) =>
+            React.createElement('tr', { key: acc.id },
+              React.createElement('td', null, React.createElement('span', { style: { color: 'var(--muted)' } }, i + 1)),
+              React.createElement('td', null, React.createElement(AccountBadge, { account: acc.name, accounts })),
+              React.createElement('td', null, fmtDate(acc.created_at?.split('T')[0])),
+              React.createElement('td', null,
+                React.createElement('button', { className: 'btn btn-danger btn-sm', onClick: () => del(acc) }, '🗑️ Excluir')
+              )
+            )
+          ))
+        )
+      )
+    )
+  );
+}
+
+// ─── APP ROOT ────────────────────────────────────────────────────────────────
 function App() {
   const [tab, setTab] = useState('estoque');
+  const [toastMsg, setToastMsg] = useState('');
+  const [toastType, setToastType] = useState('success');
   const [accounts, setAccounts] = useState([]);
 
-  const loadAccounts = useCallback(() => {
-    api('/api/accounts').then(setAccounts).catch(() => {});
+  const toast = useCallback((msg, type = 'success') => { setToastMsg(msg); setToastType(type); }, []);
+  const clearToast = () => setToastMsg('');
+
+  const loadAccounts = useCallback(async () => {
+    try { setAccounts(await api('/api/accounts')); } catch (e) { /* silent */ }
   }, []);
-
   useEffect(() => { loadAccounts(); }, [loadAccounts]);
-
-  const toast = (msg, type = 'success') => {
-    const alertBox = document.createElement('div');
-    alertBox.innerText = msg;
-    alertBox.style.position = 'fixed';
-    alertBox.style.bottom = '20px';
-    alertBox.style.right = '20px';
-    alertBox.style.padding = '12px 24px';
-    alertBox.style.borderRadius = '8px';
-    alertBox.style.color = '#fff';
-    alertBox.style.fontWeight = 'bold';
-    alertBox.style.zIndex = '99999';
-    alertBox.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
-    alertBox.style.background = type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#f59e0b';
-    document.body.appendChild(alertBox);
-    setTimeout(() => alertBox.remove(), 3500);
-  };
 
   const tabs = [
     { id: 'estoque', label: '📦 Estoque' },
@@ -684,10 +904,11 @@ function App() {
       tab === 'clientes' && React.createElement(ClientesTab, { toast }),
       tab === 'pagamentos' && React.createElement(PagamentosTab, { toast }),
       tab === 'vendas' && React.createElement(VendasTab, { toast }),
-      tab === 'contas' && React.createElement(ContasTab, { toast, accounts, onAddAccount: loadAccounts })
-    )
+      tab === 'contas' && React.createElement(ContasTab, { toast, accounts, reloadAccounts: loadAccounts })
+    ),
+    toastMsg && React.createElement(Toast, { msg: toastMsg, type: toastType, onClose: clearToast })
   );
 }
 
-const root = Azad || document.getElementById('root'); 
-ReactDOM.render(React.createElement(App), document.getElementById('root'));
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(App));
