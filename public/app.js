@@ -123,7 +123,7 @@ function EstoqueTab({ toast, accounts }) {
     try {
       if (editItem) await api(`/api/items/${editItem.id}`, { method: 'PUT', body: form });
       else await api('/api/items', { method: 'POST', body: form });
-      toast(editItem ? 'Item updated!' : 'Item added!', 'success');
+      toast(editItem ? 'Item atualizado!' : 'Item adicionado!', 'success');
       setShowModal(false); load();
     } catch (e) { toast(e.message, 'error'); }
   };
@@ -174,11 +174,12 @@ function EstoqueTab({ toast, accounts }) {
       React.createElement('div', { className: 'table-wrap' },
         React.createElement('table', null,
           React.createElement('thead', null, React.createElement('tr', null,
-            ['Nome', 'Compra', 'Custo Un.', 'Conta', 'Loja', 'Status', 'Comprador', 'Venda', 'Lucro Lote', ''].map(h => React.createElement('th', { key: h }, h))
+            ['Nome', 'Qtd', 'Compra', 'Custo Un.', 'Conta', 'Loja', 'Status', 'Comprador', 'Venda', 'Lucro Lote', ''].map(h => React.createElement('th', { key: h }, h))
           )),
           React.createElement('tbody', null, filtered.map(item =>
             React.createElement('tr', { key: item.id },
-              React.createElement('td', null, React.createElement('strong', null, item.name + (parseInt(item.quantity) > 1 && item.status !== 'vendido' ? ` (${item.quantity} un)` : ''))),
+              React.createElement('td', null, React.createElement('strong', null, item.name)),
+              React.createElement('td', null, React.createElement('span', { style: { fontWeight: 600 } }, `${item.quantity || 1} un`)),
               React.createElement('td', null, fmtDate(item.purchase_date)),
               React.createElement('td', null, React.createElement('span', { style: { color: 'var(--red)', fontWeight: 600 } }, fmt(item.cost))),
               React.createElement('td', null, React.createElement(AccountBadge, { account: item.account, accounts })),
@@ -294,7 +295,7 @@ function FinanceiroTab({ toast, accounts }) {
     try {
       if (editLoanTarget) {
         await api(`/api/loans/${editLoanTarget.id}`, { method: 'PUT', body: { ...loanForm, repayment_amount: repay } });
-        toast('Empréstimo atualizado!', 'success');
+        toast('Empréstimo updated!', 'success');
       } else {
         await api('/api/loans', { method: 'POST', body: { ...loanForm, repayment_amount: repay } });
         toast('Empréstimo registrado!', 'success');
@@ -814,12 +815,12 @@ function ContasTab({ toast, accounts, reloadAccounts }) {
                     React.createElement('td', null, e.item || '—'),
                     React.createElement('td', null, e.client),
                     isLucro
-                      ? React.Fragment.createElement(React.Fragment, null,
+                      ? React.createElement(React.Fragment, null,
                           React.createElement('td', null, React.createElement('span', { style: { color: 'var(--yellow)', fontWeight: 600 } }, fmt(e.cost))),
                           React.createElement('td', null, React.createElement('span', { style: { color: 'var(--green)' } }, fmt(e.reposto))),
                           React.createElement('td', null, React.createElement('span', { style: { color: e.pending > 0.01 ? 'var(--yellow)' : 'var(--green)', fontWeight: 600 } }, e.pending > 0.01 ? fmt(e.pending) : '✓'))
                         )
-                      : React.Fragment.createElement(React.Fragment, null,
+                      : React.createElement(React.Fragment, null,
                           React.createElement('td', null, fmt(e.cost)),
                           React.createElement('td', null, React.createElement('span', { style: { color: '#60a5fa' } }, fmt(e.reposto))),
                           React.createElement('td', null, React.createElement('span', { style: { color: e.pending > 0.01 ? 'var(--red)' : 'var(--green)', fontWeight: 600 } }, e.pending > 0.01 ? fmt(e.pending) : '✓')),
