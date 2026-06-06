@@ -140,6 +140,15 @@ function EstoqueTab({ toast, accounts }) {
     (!filterAccount || i.account === filterAccount)
   );
 
+  // NOVO: Ordenação por Hierarquia Dinâmica (Em Transporte > Em Estoque > Vendido)
+  const sortedItems = [...filtered].sort((a, b) => {
+    const weights = { em_transporte: 1, estoque: 2, vendido: 3 };
+    const weightA = weights[a.status] || 4;
+    const weightB = weights[b.status] || 4;
+    if (weightA !== weightB) return weightA - weightB;
+    return new Date(b.created_at) - new Date(a.created_at); // Desempata pelo mais recente
+  });
+
   const totalCost = filtered.reduce((a, i) => a + (parseFloat(i.cost || 0) * (parseInt(i.quantity) || 1)), 0);
   const counts = { estoque: 0, em_transporte: 0, vendido: 0 };
   filtered.forEach(i => { if (counts[i.status] !== undefined) counts[i.status] += (parseInt(i.quantity) || 1); });
@@ -170,13 +179,13 @@ function EstoqueTab({ toast, accounts }) {
         React.createElement('button', { className: 'btn btn-primary', onClick: openNew }, '+ Novo Item')
       ),
       loading ? React.createElement('div', { className: 'empty' }, React.createElement('div', { className: 'spinner' })) :
-      filtered.length === 0 ? React.createElement('div', { className: 'empty' }, React.createElement('div', { className: 'empty-icon' }, '📦'), React.createElement('p', null, 'Nenhum item encontrado')) :
+      sortedItems.length === 0 ? React.createElement('div', { className: 'empty' }, React.createElement('div', { className: 'empty-icon' }, '📦'), React.createElement('p', null, 'Nenhum item encontrado')) :
       React.createElement('div', { className: 'table-wrap' },
         React.createElement('table', null,
           React.createElement('thead', null, React.createElement('tr', null,
             ['Nome', 'Qtd', 'Compra', 'Custo Un.', 'Conta', 'Loja', 'Status', 'Comprador', 'Venda', 'Lucro Lote', ''].map(h => React.createElement('th', { key: h }, h))
           )),
-          React.createElement('tbody', null, filtered.map(item =>
+          React.createElement('tbody', null, sortedItems.map(item =>
             React.createElement('tr', { key: item.id },
               React.createElement('td', null, React.createElement('strong', null, item.name)),
               React.createElement('td', null, React.createElement('span', { style: { fontWeight: 600 } }, `${item.quantity || 1} un`)),
@@ -193,8 +202,8 @@ function EstoqueTab({ toast, accounts }) {
               ),
               React.createElement('td', null,
                 React.createElement('div', { style: { display: 'flex', gap: 6 } },
-                  React.createElement('button', { className: 'btn btn-secondary btn-sm', onClick: () => openEdit(item) }, '✏️'),
-                  item.status !== 'vendido' && React.createElement('button', { className: 'btn btn-danger btn-sm', onClick: () => del(item.id) }, '🗑️')
+                  React.createElement('button', { className: 'btn btn-secondary btn-sm', onClick: () => openEdit(item), title: 'Editar Item' }, '✏️'),
+                  item.status !== 'vendido' && React.createElement('button', { className: 'btn btn-danger btn-sm', onClick: () => del(item.id), title: 'Excluir Item' }, '🗑️')
                 )
               )
             )
@@ -295,7 +304,7 @@ function FinanceiroTab({ toast, accounts }) {
     try {
       if (editLoanTarget) {
         await api(`/api/loans/${editLoanTarget.id}`, { method: 'PUT', body: { ...loanForm, repayment_amount: repay } });
-        toast('Empréstimo updated!', 'success');
+        toast('Empréstimo atualizado!', 'success');
       } else {
         await api('/api/loans', { method: 'POST', body: { ...loanForm, repayment_amount: repay } });
         toast('Empréstimo registrado!', 'success');
@@ -517,29 +526,32 @@ function ClientesTab({ toast }) {
     api('/api/financial-overview').then(setOverview).catch(e => toast(e.message, 'error')).finally(() => setLoading(false));
   }, [toast]);
 
-  const entries = Object.entries(overview)
-    .filter(([name]) => !search || name.toLowerCase().includes(search.toLowerCase()));
+  // NOVO: Filtra e exibe apenas clientes que ainda POSSUEM saldo pendente (> 0.01)
+  const entries = Object.entries(overview).filter(([name, client]) => {
+    const nameMatch = !search || name.toLowerCase().includes(search.toLowerCase());
+    const hasBalance = client.total_balance > 0.01;
+    return nameMatch && hasBalance;
+  });
 
   return React.createElement('div', null,
     React.createElement('div', { className: 'section-header' },
-      React.createElement('div', { className: 'section-title' }, 'Clientes'),
+      React.createElement('div', { className: 'section-title' }, 'Clientes com Saldo Devedor'),
       React.createElement('input', { className: 'search-bar', placeholder: '🔍 Buscar cliente...', value: search, onChange: e => setSearch(e.target.value) })
     ),
     loading ? React.createElement('div', { className: 'empty' }, React.createElement('div', { className: 'spinner' })) :
-    entries.length === 0 ? React.createElement('div', { className: 'empty' }, React.createElement('div', { className: 'empty-icon' }, '👥'), React.createElement('p', null, 'Nenhum cliente cadastrado')) :
+    entries.length === 0 ? React.createElement('div', { className: 'empty' }, React.createElement('div', { className: 'empty-icon' }, '🎉'), React.createElement('p', null, 'Nenhum cliente com parcelas em aberto! Tudo quitado.')) :
     React.createElement('div', { className: 'client-grid' },
       entries.map(([name, client]) => {
         const openItems = client.items.filter(i => i.balance > 0.01);
-        const openBalance = openItems.reduce((a, i) => a + i.balance, 0);
         return React.createElement('div', { key: name, className: 'client-card' },
           React.createElement('div', { className: 'client-header' },
             React.createElement('div', { className: 'client-name' }, '👤 ' + name),
             React.createElement('div', { className: 'client-total' },
-              React.createElement('span', null, 'Deve: ', React.createElement('span', { style: { color: 'var(--red)', fontWeight: 700 } }, fmt(openBalance)))
+              React.createElement('span', null, 'Deve: ', React.createElement('span', { style: { color: 'var(--red)', fontWeight: 700 } }, fmt(client.total_balance)))
             )
           ),
           React.createElement('div', { className: 'client-items' },
-            client.items.map((item, idx) => {
+            openItems.map((item, idx) => {
               const completedLabel = `${item.completed_installments}/${item.num_installments}`;
               return React.createElement('div', { key: idx, className: 'client-item' },
                 React.createElement('div', null,
@@ -559,7 +571,7 @@ function ClientesTab({ toast }) {
                 ),
                 React.createElement('div', null,
                   React.createElement('div', { className: 'client-item-label' }, 'Saldo'),
-                  React.createElement('div', { className: 'client-item-val', style: { color: item.balance > 0.01 ? 'var(--red)' : 'var(--green)' } }, fmt(Math.max(0, item.balance)))
+                  React.createElement('div', { className: 'client-item-val', style: { color: 'var(--red)', fontWeight: 600 } }, fmt(item.balance))
                 )
               );
             })
